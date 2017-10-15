@@ -308,6 +308,9 @@ extern struct fp_img_driver etes603_driver;
 #ifdef ENABLE_VFS0050
 extern struct fp_img_driver vfs0050_driver;
 #endif
+#ifdef ENABLE_ELAN
+extern struct fp_img_driver elan_driver;
+#endif
 
 extern libusb_context *fpi_usb_ctx;
 extern GSList *opened_devices;
@@ -446,6 +449,8 @@ struct fpi_ssm *fpi_ssm_new(struct fp_dev *dev, ssm_handler_fn handler,
 	int nr_states);
 void fpi_ssm_free(struct fpi_ssm *machine);
 void fpi_ssm_start(struct fpi_ssm *machine, ssm_completed_fn callback);
+void fpi_ssm_start_at_state(struct fpi_ssm *machine, ssm_completed_fn callback,
+        int state);
 void fpi_ssm_start_subsm(struct fpi_ssm *parent, struct fpi_ssm *child);
 int fpi_ssm_has_completed(struct fpi_ssm *machine);
 
