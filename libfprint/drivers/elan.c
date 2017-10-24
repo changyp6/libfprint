@@ -322,6 +322,11 @@ static void elan_capture_run_state(struct fpi_ssm *ssm)
     break;
 	case CAPTURE_SUBMIT_IMAGE:
         elan_submit_image(dev);
+        /* need to report finger off and process pending events here
+         * NOTE: timeval of 0.0 has no effect */
+        elan_set_finger_present(dev, FALSE);
+        struct timeval tv = { .tv_sec = 0, .tv_usec = 1 };
+        fp_handle_events_timeout(&tv);
         fpi_ssm_next_state(ssm);
     break;
 	case CAPTURE_END:
