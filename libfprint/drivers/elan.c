@@ -151,9 +151,9 @@ static void elan_submit_image(struct fp_img_dev *dev)
     struct elan_dev *elandev = dev->priv;
     GSList *frames = NULL;
     struct fp_img *img;
- 
+
     fp_dbg("");
-    
+
     for (int i = 0; i < ELAN_SKIP_LAST_FRAMES; i++)
         elandev->frames = g_slist_next(elandev->frames);
 
@@ -288,7 +288,7 @@ static void elan_capture_run_state(struct fpi_ssm *ssm)
 {
 	struct fp_img_dev *dev = ssm->priv;
 	struct elan_dev *elandev = dev->priv;
-    
+
 	switch (ssm->cur_state) {
 	case CAPTURE_START:
         elan_run_cmds(ssm, capture_start_cmds, capture_start_cmds_len,
@@ -557,7 +557,9 @@ static void dev_deactivate(struct fp_img_dev *dev)
 }
 
 static const struct usb_id id_table[] = {
+	{ .vendor = 0x04f3, .product = 0x0c1a },
 	{ .vendor = 0x04f3, .product = 0x0907 },
+	{ .vendor = 0x04f3, .product = 0x0903 },
 	{ 0, 0, 0, },
 };
 

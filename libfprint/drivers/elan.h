@@ -37,7 +37,7 @@
 #define ELAN_FRAME_HEIGHT (ELAN_RAW_FRAME_WIDTH - 2 * ELAN_FRAME_MARGIN)
 #define ELAN_FRAME_SIZE (ELAN_FRAME_WIDTH * ELAN_FRAME_HEIGHT)
 
-#define ELAN_IMG_WIDTH (ELAN_FRAME_WIDTH * 3 / 2) 
+#define ELAN_IMG_WIDTH (ELAN_FRAME_WIDTH * 3 / 2)
 #define ELAN_MIN_FRAMES 7
 #define ELAN_MAX_FRAMES 30
 /* lasf frame(s) before the finger has been lifted can be bad */
@@ -138,7 +138,7 @@ static const struct elan_cmd capture_start_cmds[] = {
 };
 
 static size_t capture_start_cmds_len = array_n_elements(capture_start_cmds);
-    
+
 static const struct elan_cmd capture_wait_finger_cmds[] = {
     /* wait for finger
      * subsequent read will block until finger is placed on the reader */
