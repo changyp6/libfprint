@@ -98,23 +98,15 @@ static void __ssm_call_handler(struct fpi_ssm *machine)
 	machine->handler(machine);
 }
 
-/* Start a ssm at a specified state. */
-void fpi_ssm_start_at_state(struct fpi_ssm *ssm, ssm_completed_fn callback,
-        int state)
-{
-	BUG_ON(!ssm->completed);
-	BUG_ON(state >= ssm->nr_states);
-	ssm->callback = callback;
-	ssm->cur_state = state;
-	ssm->completed = FALSE;
-	ssm->error = 0;
-	__ssm_call_handler(ssm);
-}
-
 /* Start a ssm. You can also restart a completed or aborted ssm. */
 void fpi_ssm_start(struct fpi_ssm *ssm, ssm_completed_fn callback)
 {
-    fpi_ssm_start_at_state(ssm, callback, 0);
+	BUG_ON(!ssm->completed);
+	ssm->callback = callback;
+	ssm->cur_state = 0;
+	ssm->completed = FALSE;
+	ssm->error = 0;
+	__ssm_call_handler(ssm);
 }
 
 static void __subsm_complete(struct fpi_ssm *ssm)
