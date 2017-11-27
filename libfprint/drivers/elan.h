@@ -40,12 +40,12 @@
 #define ELAN_EP_CMD_OUT (0x1 | LIBUSB_ENDPOINT_OUT)
 #define ELAN_EP_CMD_IN (0x3 | LIBUSB_ENDPOINT_IN)
 #define ELAN_EP_IMG_IN (0x2 | LIBUSB_ENDPOINT_IN)
-/* raw frame sizes are calculated from image dimesions reported by the device */
-#define ELAN_CMD_RAW_FRAME_SIZE (-1)
+
 /* usual command timeout and timeout for when we need to check if the finger is
  * still on the device */
 #define ELAN_CMD_TIMEOUT 10000
 #define ELAN_FINGER_TIMEOUT 200
+
 struct elan_cmd {
 	unsigned char cmd[ELAN_CMD_LEN];
 	int response_len;
@@ -79,9 +79,11 @@ static const struct elan_cmd init_start_cmds[] = {
 static const size_t init_start_cmds_len = array_n_elements(init_start_cmds);
 
 static const struct elan_cmd read_cmds[] = {
+	/* raw frame sizes are calculated from image dimesions reported by the
+	 * device */
 	{
 	 .cmd = {0x00, 0x09},
-	 .response_len = ELAN_CMD_RAW_FRAME_SIZE,
+	 .response_len = -1,
 	 .response_in = ELAN_EP_IMG_IN,
 	 },
 };
