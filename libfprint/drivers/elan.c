@@ -230,17 +230,17 @@ static void elan_cmd_read(struct fpi_ssm *ssm)
 
 	fp_dbg("");
 
+	if (elandev->cmds[elandev->cmd_idx].cmd == read_cmds[0].cmd)
+		/* raw data has 2-byte "pixels" and the frame is vertical */
+		response_len =
+		    elandev->raw_frame_width * elandev->frame_width * 2;
+
 	struct libusb_transfer *transfer = libusb_alloc_transfer(0);
 	if (!transfer) {
 		fpi_ssm_mark_aborted(ssm, -ENOMEM);
 		return;
 	}
 	elandev->cur_transfer = transfer;
-
-	if (response_len == ELAN_CMD_RAW_FRAME_SIZE)
-		/* raw data has 2-byte "pixels" */
-		response_len =
-		    elandev->raw_frame_width * elandev->frame_width * 2;
 
 	g_free(elandev->last_read);
 	elandev->last_read = g_malloc(response_len);
@@ -486,9 +486,8 @@ static void elan_calibrate(struct fp_img_dev *dev)
 	fp_dbg("");
 
 	elan_dev_reset(elandev);
-	struct fpi_ssm *ssm =
-	    fpi_ssm_new(dev->dev, elan_calibrate_run_state,
-			CALIBRATE_NUM_STATES);
+	struct fpi_ssm *ssm = fpi_ssm_new(dev->dev, elan_calibrate_run_state,
+					  CALIBRATE_NUM_STATES);
 	ssm->priv = dev;
 	fpi_ssm_start(ssm, calibrate_complete);
 }
