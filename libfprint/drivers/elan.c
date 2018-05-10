@@ -48,6 +48,14 @@
 #include "elan.h"
 #include "driver_ids.h"
 
+#define dbg_buf(buf, len)                                     \
+  if (len == 1)                                               \
+    fp_dbg("%02hx", buf[0]);                                  \
+  else if (len == 2)                                          \
+    fp_dbg("%04hx", buf[0] << 8 | buf[1]);                    \
+  else if (len > 2)                                           \
+    fp_dbg("%04hx... (%d bytes)", buf[0] << 8 | buf[1], len)
+
 unsigned char elan_get_pixel(struct fpi_frame_asmbl_ctx *ctx,
 			     struct fpi_frame *frame, unsigned int x,
 			     unsigned int y)
@@ -84,7 +92,7 @@ struct elan_dev {
 	unsigned short *background;
 	unsigned char frame_width;
 	unsigned char frame_height;
-	unsigned char raw_frame_width;
+	unsigned char raw_frame_height;
 	int num_frames;
 	GSList *frames;
 	/* end state */
@@ -118,18 +126,33 @@ static void elan_save_frame(struct elan_dev *elandev, unsigned short *frame)
 {
 	fp_dbg("");
 
-	unsigned char raw_height = elandev->frame_width;
-	unsigned char raw_width = elandev->raw_frame_width;
+	/* so far 3 types of readers by sensor dimensions and orientation have been
+	 * seen in the wild:
+	 * 1. 144x64. Raw images are in portrait orientation while readers themselves
+	 *    are placed (e.g. built into a touchpad) in landscape orientation. These
+	 *    need to be rotated before assembling.
+	 * 2. 96x96 rotated. Like the first type but square. Likewise, need to be
+	 *    rotated before assembling.
+	 * 3. 96x96 normal. Square and need NOT be rotated. So far there's only been
+	 *    1 report of a 0c03 of this type. Hopefully this type can be identified
+	 *    by device id (and manufacturers don't just install the readers as they
+	 *    please).
+	 * we also discard stripes of 'frame_margin' from bottom and top because
+	 * assembling works bad for tall frames */
 
-	/* Raw images are vertical and perpendicular to swipe direction of a
-	 * normalized image, which means we need to make them horizontal before
-	 * assembling. We also discard stripes of 'frame_margin' along raw
-	 * height. */
-	unsigned char frame_margin = (raw_width - elandev->frame_height) / 2;
-	for (int y = 0; y < raw_height; y++)
-		for (int x = frame_margin; x < raw_width - frame_margin; x++) {
-			int frame_idx = y + (x - frame_margin) * raw_height;
-			int raw_idx = x + y * raw_width;
+	unsigned char frame_width = elandev->frame_width;
+	unsigned char frame_height = elandev->frame_height;
+	unsigned char raw_height = elandev->raw_frame_height;
+	unsigned char frame_margin = (raw_height - elandev->frame_height) / 2;
+	int frame_idx, raw_idx;
+
+	for (int y = 0; y < frame_height; y++)
+		for (int x = 0; x < frame_width; x++) {
+			if (elandev->dev_type & ELAN_NOT_ROTATED)
+				raw_idx = x + (y + frame_margin) * frame_width;
+			else
+				raw_idx = frame_margin + y + x * raw_height;
+			frame_idx = x + y * frame_width;
 			frame[frame_idx] =
 			    ((unsigned short *)elandev->last_read)[raw_idx];
 		}
@@ -181,22 +204,32 @@ static void elan_save_background(struct elan_dev *elandev)
  *                  \
  *    ======== 0     \___> ======== 0
  */
-static void elan_save_img_frame(struct elan_dev *elandev)
+static int elan_save_img_frame(struct elan_dev *elandev)
 {
 	fp_dbg("");
 
 	unsigned int frame_size = elandev->frame_width * elandev->frame_height;
 	unsigned short *frame = g_malloc(frame_size * sizeof(short));
 	elan_save_frame(elandev, frame);
+	unsigned int sum = 0;
 
-	for (int i = 0; i < frame_size; i++)
+	for (int i = 0; i < frame_size; i++) {
 		if (elandev->background[i] > frame[i])
 			frame[i] = 0;
 		else
 			frame[i] -= elandev->background[i];
+		sum += frame[i];
+	}
+
+	if (sum == 0) {
+		fp_dbg
+		    ("frame darker that background; finger present during calibration?");
+		return -1;
+	}
 
 	elandev->frames = g_slist_prepend(elandev->frames, frame);
 	elandev->num_frames += 1;
+	return 0;
 }
 
 static void elan_process_frame_linear(unsigned short *raw_frame,
@@ -272,6 +305,7 @@ static void elan_submit_image(struct fp_img_dev *dev)
 
 	for (int i = 0; i < ELAN_SKIP_LAST_FRAMES; i++)
 		elandev->frames = g_slist_next(elandev->frames);
+	elandev->num_frames -= ELAN_SKIP_LAST_FRAMES;
 
 	assembling_ctx.frame_width = elandev->frame_width;
 	assembling_ctx.frame_height = elandev->frame_height;
@@ -279,10 +313,8 @@ static void elan_submit_image(struct fp_img_dev *dev)
 	g_slist_foreach(elandev->frames, (GFunc) elandev->process_frame,
 			&frames);
 	fpi_do_movement_estimation(&assembling_ctx, frames,
-				   elandev->num_frames - ELAN_SKIP_LAST_FRAMES);
-	img =
-	    fpi_assemble_frames(&assembling_ctx, frames,
-				elandev->num_frames - ELAN_SKIP_LAST_FRAMES);
+				   elandev->num_frames);
+	img = fpi_assemble_frames(&assembling_ctx, frames, elandev->num_frames);
 
 	img->flags |= FP_IMG_PARTIAL;
 	fpi_imgdev_image_captured(dev, img);
@@ -296,8 +328,6 @@ static void elan_cmd_done(struct fpi_ssm *ssm)
 
 static void elan_cmd_cb(struct libusb_transfer *transfer)
 {
-	fp_dbg("");
-
 	struct fpi_ssm *ssm = transfer->user_data;
 	struct fp_img_dev *dev = ssm->priv;
 	struct elan_dev *elandev = dev->priv;
@@ -311,12 +341,15 @@ static void elan_cmd_cb(struct libusb_transfer *transfer)
 			       transfer->length, transfer->actual_length);
 			elan_dev_reset(elandev);
 			fpi_ssm_mark_aborted(ssm, -EPROTO);
-		} else if (transfer->endpoint & LIBUSB_ENDPOINT_IN)
+		} else if (transfer->endpoint & LIBUSB_ENDPOINT_IN) {
 			/* just finished receiving */
+			dbg_buf(elandev->last_read, transfer->actual_length);
 			elan_cmd_done(ssm);
-		else
+		} else {
 			/* just finished sending */
+			fp_dbg("");
 			elan_cmd_read(ssm);
+		}
 		break;
 	case LIBUSB_TRANSFER_CANCELLED:
 		fp_dbg("transfer cancelled");
@@ -351,7 +384,7 @@ static void elan_cmd_read(struct fpi_ssm *ssm)
 	if (elandev->cmd->cmd == get_image_cmd.cmd)
 		/* raw data has 2-byte "pixels" and the frame is vertical */
 		response_len =
-		    elandev->raw_frame_width * elandev->frame_width * 2;
+		    elandev->raw_frame_height * elandev->frame_width * 2;
 
 	struct libusb_transfer *transfer = libusb_alloc_transfer(0);
 	if (!transfer) {
@@ -376,7 +409,7 @@ static void elan_cmd_read(struct fpi_ssm *ssm)
 static void elan_run_cmd(struct fpi_ssm *ssm, const struct elan_cmd *cmd,
 			 int cmd_timeout)
 {
-	fp_dbg("%04hx", (cmd->cmd[0] << 8 | cmd->cmd[1]));
+	dbg_buf(cmd->cmd, 2);
 
 	struct fp_img_dev *dev = ssm->priv;
 	struct elan_dev *elandev = dev->priv;
@@ -458,6 +491,7 @@ static void capture_run_state(struct fpi_ssm *ssm)
 {
 	struct fp_img_dev *dev = ssm->priv;
 	struct elan_dev *elandev = dev->priv;
+	int r;
 
 	switch (ssm->cur_state) {
 	case CAPTURE_LED_ON:
@@ -477,8 +511,10 @@ static void capture_run_state(struct fpi_ssm *ssm)
 			fpi_ssm_mark_aborted(ssm, -EBADMSG);
 		break;
 	case CAPTURE_CHECK_ENOUGH_FRAMES:
-		elan_save_img_frame(elandev);
-		if (elandev->num_frames < ELAN_MAX_FRAMES) {
+		r = elan_save_img_frame(elandev);
+		if (r < 0)
+			fpi_ssm_mark_aborted(ssm, r);
+		else if (elandev->num_frames < ELAN_MAX_FRAMES) {
 			/* quickly stop if finger is removed */
 			elandev->cmd_timeout = ELAN_FINGER_TIMEOUT;
 			fpi_ssm_jump_to_state(ssm, CAPTURE_WAIT_FINGER);
@@ -525,8 +561,11 @@ static void capture_complete(struct fpi_ssm *ssm)
 
 	/* ...but only on enroll! If verify or identify fails because of short swipe,
 	 * we need to do it manually. It feels like libfprint or the application
-	 * should know better if they want to retry, but they don't. */
-	if (elandev->dev_state != IMGDEV_STATE_INACTIVE)
+	 * should know better if they want to retry, but they don't. Unless we've
+	 * been asked to deactivate, try to re-enter the capture loop. Since state
+	 * change is async, there's still a chance to be deactivated by another
+	 * pending event. */
+	if (elandev->dev_state_next != IMGDEV_STATE_INACTIVE)
 		dev_change_state(dev, IMGDEV_STATE_AWAIT_FINGER_ON);
 
 	fpi_ssm_free(ssm);
@@ -703,15 +742,20 @@ static void activate_run_state(struct fpi_ssm *ssm)
 		elan_run_cmd(ssm, &get_sensor_dim_cmd, ELAN_CMD_TIMEOUT);
 		break;
 	case ACTIVATE_SET_SENSOR_DIM:
-		elandev->frame_width = elandev->last_read[2];
-		elandev->raw_frame_width = elandev->last_read[0];
-		if (elandev->raw_frame_width < ELAN_MAX_FRAME_HEIGHT)
-			elandev->frame_height = elandev->raw_frame_width;
-		else
+		/* see elan_save_frame for details */
+		if (elandev->dev_type & ELAN_NOT_ROTATED) {
+			elandev->frame_width = elandev->last_read[0];
+			elandev->frame_height = elandev->raw_frame_height =
+			    elandev->last_read[2];
+		} else {
+			elandev->frame_width = elandev->last_read[2];
+			elandev->frame_height = elandev->raw_frame_height =
+			    elandev->last_read[0];
+		}
+		if (elandev->frame_height > ELAN_MAX_FRAME_HEIGHT)
 			elandev->frame_height = ELAN_MAX_FRAME_HEIGHT;
-		/* see elan_save_frame for why it's width x raw_width */
 		fp_dbg("sensor dimensions, WxH: %dx%d", elandev->frame_width,
-		       elandev->raw_frame_width);
+		       elandev->raw_frame_height);
 		fpi_ssm_next_state(ssm);
 		break;
 	case ACTIVATE_CMD_1:
@@ -804,7 +848,7 @@ static void elan_change_state(struct fp_img_dev *dev)
 
 	if (elandev->dev_state == next_state) {
 		fp_dbg("already in %d", next_state);
-		return 0;
+		return;
 	} else
 		fp_dbg("changing to %d", next_state);
 
@@ -883,7 +927,7 @@ struct fp_img_driver elan_driver = {
 		   },
 	.flags = 0,
 
-	.bz3_threshold = 30,
+	.bz3_threshold = 24,
 
 	.open = dev_init,
 	.close = dev_deinit,
