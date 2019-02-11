@@ -35,6 +35,20 @@ cd builddir_dbg
 ninja
 ```
 
+### Pre-requisites
+
+YMMV. The best way to get all required packages and avoid installing unnecessary ones is to keep running `meson builddir` and installing the packages it asks for one-by-one.
+
+```
+libglib2.0-dev
+libnss3-dev
+libpixman-1-dev
+libusb-1.0.0-dev
+libx11-dev
+libxv-dev
+pkg-config
+```
+
 ### Capture
 
 > This may require root
@@ -44,7 +58,6 @@ examples/img_capture
 ```
 
 Then open `finger.pgm` with an image viewer.
-
 
 ### Try enrolling and verifying
 
@@ -62,6 +75,33 @@ Last enrolled image is stored in `enrolled.pgm`, last one used for verification 
 ```
 LD_LIBRARY_PATH=./libfprint/.libs/ fprint_demo
 ```
+
+### Unrecognized devices
+
+If you have a device that is not detected by this driver and you want to try it out, you can add it to the supported devices list and recompile. I have reasons to believe that the entire family of compatible Elan readers should already be recognized without modification, so if you need to do this, the chance is slim. But my info could be outdated.
+
+> WARNING: However small, there is a possibility that your device can be damaged or end up in some unusable state if it receives commands that it doesn't recognize. I think this is quite unlikely. Nevertheless, you have been warned.
+
+First, find out device id of your reader.
+```
+$ lsusb | grep -i elan
+Bus 002 Device 028: ID 04f3:abcd Elan Microelectronics Corp.
+                            ^^^^
+```
+
+Now add it to `libfprint/drivers/elan.h` before `{0, 0, 0}`.
+```
+@@ -208,6 +208,7 @@ static const struct usb_id elan_id_table[] = {
+        {.vendor = ELAN_VEND_ID,.product = 0x0c31,.driver_data = ELAN_ALL_DEV},
+        {.vendor = ELAN_VEND_ID,.product = 0x0c32,.driver_data = ELAN_ALL_DEV},
+        {.vendor = ELAN_VEND_ID,.product = 0x0c33,.driver_data = ELAN_ALL_DEV},
++       {.vendor = ELAN_VEND_ID,.product = 0xabcd,.driver_data = ELAN_ALL_DEV},
+        {0, 0, 0,},
+ };
+ ```
+
+And [recompile](#trying-it-out).
+
 
 ## Installing
 
